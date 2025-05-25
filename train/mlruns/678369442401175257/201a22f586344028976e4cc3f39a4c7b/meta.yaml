@@ -1,0 +1,15 @@
+artifact_uri: file://home/mayn/LLM/LLM-Pipeline/train/mlruns/678369442401175257/201a22f586344028976e4cc3f39a4c7b/artifacts
+end_time: 1748198072330
+entry_point_name: ''
+experiment_id: '678369442401175257'
+lifecycle_stage: active
+run_id: 201a22f586344028976e4cc3f39a4c7b
+run_name: luminous-squid-269
+run_uuid: 201a22f586344028976e4cc3f39a4c7b
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1748198056038
+status: 4
+tags: []
+user_id: mayn

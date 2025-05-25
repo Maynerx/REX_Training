@@ -1,0 +1,30 @@
+# confing/config.yaml
+defaults:
+  - override hydra/job_logging: disabled
+
+# model hyperparameters
+model:
+  model_name: BasicLM
+  n_layers: 4
+  n_heads: 4
+  n_embd: 256
+  max_length: 128
+
+# training settings
+training:
+  run_name: "basic_lm_experiment"
+  batch_size: 64
+  lr: 1e-3
+  epochs: 100
+  mixed_precision: true
+  max_grad_norm: 1.0
+  train_ratio: 0.8
+  val_ratio: 0.2
+
+
+# inference settings
+inference:
+  kv_cache: true
+  quantized: false # Only use when CUDA is not available
+  mixed_precision: false # Only use when CUDA is not available
+  model_path: "../models/model_basic_lm_experiment.pth"

@@ -1,0 +1,6 @@
+artifact_location: file://home/mayn/LLM/LLM-Pipeline/train/mlruns/678369442401175257
+creation_time: 1748198055310
+experiment_id: '678369442401175257'
+last_update_time: 1748198055310
+lifecycle_stage: active
+name: basic_lm_experiment
