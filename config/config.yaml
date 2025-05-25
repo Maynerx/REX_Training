@@ -16,7 +16,7 @@ training:
   batch_size: 64
   lr: 1e-3
   epochs: 100
-  mixed_precision: true
+  mixed_precision: false
   max_grad_norm: 1.0
   train_ratio: 0.8
   val_ratio: 0.2
