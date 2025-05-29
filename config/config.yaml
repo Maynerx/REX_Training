@@ -5,10 +5,10 @@ defaults:
 # model hyperparameters
 model:
   model_name: BasicLM
-  n_layers: 4
-  n_heads: 4
-  n_embd: 256
-  max_length: 512
+  n_layers: 12
+  n_heads: 12
+  n_embd: 768
+  max_length: 128
 
 # training settings
 training:
