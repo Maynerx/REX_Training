@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import mlflow
-import tqdm
+import tqdm.notebook as tqdm
 from transformers import GPT2Tokenizer
 from torch.amp import autocast, GradScaler
 import math
