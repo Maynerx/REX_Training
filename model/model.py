@@ -93,29 +93,14 @@ class FlashAttention(nn.Module):
         T_k = k.size(2)    # total key/value length
         T_q = q.size(2)    # query length
 
-        if x.device.type == 'cuda':
-            # This is flash attention, you can also implement FlashAttention2 or FlashAttention3, or even XFormers
-            # But since this is a simple implementation, I will remain simple and use FlashAttention
-            with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
-                attn = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=None,
-                    dropout_p=self.dropout.p,
-                    is_causal=True,
-                    scale=self.scaling
-                )
-        else:
-            # This is a simple implementation of attention since flash attention is not available on CPU
-            mask = torch.triu(
-                torch.full((T_q, T_k), -1e9, device=x.device),
-                diagonal=1
-            ).unsqueeze(0).unsqueeze(0) 
-
-            scores = torch.matmul(q, k.transpose(-2,-1)) * self.scaling 
-            scores = scores + mask
-            weights = F.softmax(scores, dim=-1)
-            weights = self.dropout(weights)
-            attn = torch.matmul(weights, v)
+        with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
+            attn = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=None,
+            dropout_p=self.dropout.p,
+            is_causal=True,
+            scale=self.scaling
+        )
 
         T_out = attn.size(2) 
         attn = attn.permute(0,2,1,3).reshape(B, T_out, D)
