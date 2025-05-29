@@ -48,17 +48,18 @@ class Trainer:
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
+        self.num_parameters = sum(p.numel() for p in self.model.parameters())
 
         # Initialize DeepSpeed, passing the optimizer
         # DeepSpeed will manage the optimizer and can also return a scheduler
-        self.model, self.optimizer, _, returned_scheduler = deepspeed.initialize(
+        self.model_engine, _, _, returned_scheduler = deepspeed.initialize(
             model=self.model,
             optimizer=optimizer, # Pass the externally created optimizer
             lr_scheduler=self._lr_scheduler_callable,  # Use a callable for the scheduler
             config="train.json"  # Path to your DeepSpeed configuration file
         )
         self.scheduler = returned_scheduler
-        self.num_parameters = sum(p.numel() for p in self.model.parameters())
+        
             
         self.criterion = nn.CrossEntropyLoss()
         self.tokenizer = tokenizer
@@ -84,34 +85,22 @@ class Trainer:
         for input_ids, targets in self.train_loader:
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
 
-            self.optimizer.zero_grad()
-
             if self.mixed_precision:
                 with autocast(self.device.type):
-                    logits = self.model(input_ids)
+                    logits = self.model_engine(input_ids)
                     loss = self.criterion(
                         logits.view(-1, logits.size(-1)),
                         targets.view(-1)
                     )
-                scaler.scale(loss).backward()
-                scaler.unscale_(self.optimizer)
+                self.model_engine.backward(loss)
             else:
-                logits = self.model(input_ids)
+                logits = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
                 )
-                loss.backward()
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-
-            if self.mixed_precision:
-                scaler.step(self.optimizer)
-                scaler.update()
-            else:
-                self.optimizer.step()
-
-            if self.scheduler is not None:
-                self.scheduler.step()
+                self.model_engine.backward(loss)
+            self.model_engine.step()  # This will handle the optimizer step
 
             total_train_loss += loss.item()
 
@@ -127,7 +116,7 @@ class Trainer:
         with torch.no_grad():
             for input_ids, targets in self.val_loader:  
                 input_ids, targets = input_ids.to(self.device), targets.to(self.device)
-                logits = self.model(input_ids)
+                logits = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
@@ -189,6 +178,7 @@ class Trainer:
                 self.log_metrics(epoch, train_loss, val_loss)
                 if (epoch + 1) % eval_interval == 0:
                     print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                    print(f"Memory reserved: {torch.cuda.memory_reserved(self.device) / 1024 ** 2:.2f} MB")
                 if self.device.type == "cuda":
                     torch.cuda.empty_cache()
             print("Training complete.")
