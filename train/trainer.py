@@ -172,6 +172,7 @@ class Trainer:
             mlflow.log_param("n_heads", self.model.n_heads)
             mlflow.log_param("n_embd", self.model.n_embd)
             mlflow.log_param("max_length", self.model.max_length)
+            get_accelerator().empty_cache()
             for epoch in tqdm.tqdm(range(num_epochs)):        
                 train_loss = self.train_one_epoch()
                 val_loss  = self.validate()
