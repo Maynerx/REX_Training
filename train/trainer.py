@@ -77,13 +77,14 @@ class Trainer:
         """
         Train the model for one epoch.
         """
-        self.model.train()
+        self.model_engine.train()
         total_train_loss = 0.0
 
         scaler = self.scaler if self.mixed_precision else None
 
-        for input_ids, targets in self.train_loader:
-            input_ids, targets = input_ids.to(self.device), targets.to(self.device)
+        for batch in self.train_loader:
+
+            input_ids, targets = batch['input_ids'].to(self.device), batch['labels'].to(self.device)
 
             if self.mixed_precision:
                 with autocast(self.device.type):
@@ -111,11 +112,11 @@ class Trainer:
         """
         Validate the model on the validation set.
         """
-        self.model.eval()
+        self.model_engine.eval()
         total_val_loss = 0.0
         with torch.no_grad():
-            for input_ids, targets in self.val_loader:  
-                input_ids, targets = input_ids.to(self.device), targets.to(self.device)
+            for batch in self.val_loader:  
+                input_ids, targets = batch['input_ids'].to(self.device), batch['labels'].to(self.device)
                 logits = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
@@ -125,11 +126,12 @@ class Trainer:
         avg_val = total_val_loss / len(self.val_loader)
         return avg_val
     
-    def save_model(self, run_name: str, path: str = ''):
+    def save_model(self, run_name: str):
         """
         Save the model and log it to MLflow.
         """
-        torch.save(self.model, f"{path}/model_{run_name}.pth")
+        torch.save(self.model_engine.module.state_dict(), f"model_{run_name}.pth")
+        self.model_engine.save_checkpoint(f"deepspeed_{run_name}")
         print(f"Model saved to {run_name}.pth")
         
 
@@ -172,7 +174,6 @@ class Trainer:
             mlflow.log_param("n_heads", self.model.n_heads)
             mlflow.log_param("n_embd", self.model.n_embd)
             mlflow.log_param("max_length", self.model.max_length)
-            get_accelerator().empty_cache()
             for epoch in tqdm.tqdm(range(num_epochs)):        
                 train_loss = self.train_one_epoch()
                 val_loss  = self.validate()
@@ -185,7 +186,3 @@ class Trainer:
                 get_accelerator().empty_cache()
             print("Training complete.")
         return self.model
-
-
-
-
