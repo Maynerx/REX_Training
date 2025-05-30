@@ -1,5 +1,5 @@
 {
-  "train_micro_batch_size_per_gpu": 16,
+  "train_micro_batch_size_per_gpu": 27,
   "gradient_accumulation_steps": 3,
   "contiguous_gradients": true,
   "sub_group_size": 1e9,
