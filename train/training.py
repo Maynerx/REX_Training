@@ -6,6 +6,7 @@ import argparse
 from trainer import Trainer
 import hydra
 from omegaconf import DictConfig
+from datasets import load_dataset
 # ignore warnings
 import warnings
 from omegaconf import OmegaConf
@@ -27,49 +28,46 @@ tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 tokenizer.pad_token = tokenizer.eos_token
 
 
-# Classic dataloading functions
-def chunkify(token_list, block_size, stride=None):
-    if stride is None:
-        stride = block_size
-    blocks = []
-    for i in range(0, len(token_list) - block_size, stride):
-        x = token_list[i : i + block_size]
-        y = token_list[i + 1 : i + block_size + 1]
-        blocks.append((x, y))
-    return blocks
 
 class BlockDataset(Dataset):
-    def __init__(self, blocks):
-        self.blocks = blocks
-    def __len__(self):
-        return len(self.blocks)
-    def __getitem__(self, idx):
-        x, y = self.blocks[idx]
-        return torch.tensor(x, dtype=torch.long), torch.tensor(y, dtype=torch.long)
+    def __init__(self, token_ids: torch.LongTensor, block_size: int):
+        n_tokens = token_ids.size(0)
+        n_blocks = (n_tokens - 1) // block_size
+        usable = token_ids[: n_blocks * block_size + 1]
+        self.inputs = usable[:-1].view(n_blocks, block_size)
+        self.labels = usable[1:].view(n_blocks, block_size)
 
+    def __len__(self):
+        return self.inputs.size(0)
+
+    def __getitem__(self, idx):
+        return {
+            "input_ids": self.inputs[idx],
+            "labels":    self.labels[idx],
+        }
 
 # === Loading Dataset ===
-def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: int) -> tuple[Dataset, Dataset]:
-    """
-    Load the dataset from a text file and split it into training and validation sets.
-    """
-    with open(f"{CURRENT_DIR}/{file_path}", 'r', encoding='utf-8') as f:
-        text = f.read()
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    tokenizer.pad_token = tokenizer.eos_token
-    tokens = tokenizer.encode(text)
-    N = len(tokens)
-    train_end = int(train_ratio * N)
-    val_end = train_end + int(val_ratio * N)
-    train_tokens = tokens[:train_end]
-    val_tokens = tokens[train_end:val_end]
-    train_blocks = chunkify(train_tokens, max_length)
-    val_blocks = chunkify(val_tokens,   max_length)
-    print(f"Train blocks: {len(train_blocks)}, Val blocks: {len(val_blocks)}")
 
-    train_ds = BlockDataset(train_blocks)
-    val_ds   = BlockDataset(val_blocks)
+
+# Should be changed too 
+def load_wikitext_block(tokenizer, block_size=512):
+    # 1) load and filter out empty lines
+    ds = load_dataset("wikitext", "wikitext-2-v1")
+    train_texts = [t for t in ds["train"]["text"]       if t.strip() != ""]
+    val_texts   = [t for t in ds["validation"]["text"]  if t.strip() != ""]
+
+    # 2) concatenate & tokenize once per split
+    all_train = " ".join(train_texts)
+    all_val   = " ".join(val_texts)
+
+    train_ids = tokenizer(all_train, return_tensors="pt")["input_ids"].squeeze(0)
+    val_ids   = tokenizer(all_val,   return_tensors="pt")["input_ids"].squeeze(0)
+
+    # 3) build block datasets
+    train_ds = BlockDataset(train_ids, block_size)
+    val_ds   = BlockDataset(val_ids,   block_size)
     return train_ds, val_ds
+
 
 # === Main Function ===
 def main():
@@ -86,11 +84,9 @@ def main():
     )
 
     # === Load Dataset ===
-    train_ds, val_ds = load_dataset(
-        file_path="input.txt",
-        train_ratio=cfg.training.train_ratio,
-        val_ratio=cfg.training.val_ratio,
-        max_length=cfg.model.max_length
+    train_ds, val_ds = load_wikitext_block(
+        tokenizer=tokenizer,
+        block_size=cfg.model.max_length
     )
 
     # === Training ===
@@ -112,9 +108,9 @@ def main():
         curent_dir=CURRENT_DIR
     
     )
+    # Should change this to the current directory
     trainer.save_model(
         run_name=run_name, 
-        path=f"{CURRENT_DIR}/models"
     )
 
 if __name__ == "__main__":
