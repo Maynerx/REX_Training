@@ -5,15 +5,15 @@ defaults:
 # model hyperparameters
 model:
   model_name: BasicLM
-  n_layers: 16
-  n_heads: 16
+  n_layers: 12
+  n_heads: 12
   n_embd: 768
   max_length: 512
 
 # training settings
 training:
   run_name: "basic_lm_experiment"
-  batch_size: 48
+  batch_size: 64
   lr: 1e-3
   epochs: 100
   mixed_precision: false
