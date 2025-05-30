@@ -166,6 +166,7 @@ class Trainer:
         mlflow.set_tracking_uri(f"file:///{curent_dir}/mlruns") 
         mlflow.set_experiment(run_name)
         with mlflow.start_run():
+            get_accelerator().empty_cache()
             mlflow.run_name = run_name
             mlflow.log_param("num_epoch", num_epochs)
             mlflow.log_param("batch_size", self.batch_size)
