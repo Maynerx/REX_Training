@@ -9,7 +9,7 @@ import math
 import os
 import sys
 import deepspeed
-
+from deepspeed.accelerator import get_accelerator
 # TODO: File another way to import the model
 # This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -181,6 +181,7 @@ class Trainer:
                     print(f"Memory reserved: {torch.cuda.memory_reserved(self.device) / 1024 ** 2:.2f} MB")
                 if self.device.type == "cuda":
                     torch.cuda.empty_cache()
+                get_accelerator().empty_cache()
             print("Training complete.")
         return self.model
 
