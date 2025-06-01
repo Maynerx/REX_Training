@@ -135,16 +135,14 @@ class Trainer:
         print(f"Model saved to {run_name}.pth")
         
 
-    def log_metrics(self, epoch : int, train_loss : float, val_loss : float):
+    def log_metrics(self, epoch : int, train_loss : float):
         """
         Log training and validation metrics to MLflow.
         """
         mlflow.log_metric("train_loss", train_loss, step=epoch)
-        mlflow.log_metric("val_loss", val_loss, step=epoch)
         mlflow.log_metric("epoch", epoch)
         mlflow.log_metric("learning_rate", self.scheduler.get_last_lr()[0], step=epoch)
         mlflow.log_metric("train_perplexity", math.exp(train_loss), step=epoch)
-        mlflow.log_metric("val_perplexity", math.exp(val_loss), step=epoch)
         if self.device.type == "cuda":
             mlflow.log_metric("GPU Memory Allocated", torch.cuda.memory_allocated(self.device) / 1024 ** 2, step=epoch)
             mlflow.log_metric("GPU Memory Cached", torch.cuda.memory_reserved(self.device) / 1024 ** 2, step=epoch)
@@ -163,6 +161,7 @@ class Trainer:
         print(f"Max Grad Norm: {self.max_grad_norm}")
         print(f"Device: {self.device}")
         eval_interval = max(1, num_epochs // 10)
+        val_iterations = 0
         mlflow.set_tracking_uri(f"file:///{curent_dir}/mlruns") 
         mlflow.set_experiment(run_name)
         with mlflow.start_run():
@@ -177,9 +176,12 @@ class Trainer:
             mlflow.log_param("max_length", self.model.max_length)
             for epoch in tqdm.tqdm(range(num_epochs)):        
                 train_loss = self.train_one_epoch()
-                val_loss  = self.validate()
-                self.log_metrics(epoch, train_loss, val_loss)
+                self.log_metrics(epoch, train_loss)
                 if (epoch + 1) % eval_interval == 0:
+                    val_loss  = self.validate()
+                    mlflow.log_metric("val_perplexity", math.exp(val_loss), step=val_iterations)
+                    mlflow.log_metric("val_loss", val_loss, step=val_iterations)
+                    val_iterations += 1
                     print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
                     print(f"Memory reserved: {torch.cuda.memory_reserved(self.device) / 1024 ** 2:.2f} MB")
                 if self.device.type == "cuda":
