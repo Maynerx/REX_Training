@@ -16,7 +16,7 @@ training:
   run_name: "basic_lm_experiment"
   batch_size: 52
   lr: 1e-3
-  epochs: 40
+  epochs: 20
   mixed_precision: false
   max_grad_norm: 1.0
   train_ratio: 0.8
