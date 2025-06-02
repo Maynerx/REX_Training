@@ -74,6 +74,8 @@ def main():
     cfg = OmegaConf.load("../config/config.yaml")
     run_name = cfg.training.run_name
 
+
+
     # === Model ===
     model = Transformer(
         vocab_size=tokenizer.vocab_size,
@@ -82,6 +84,14 @@ def main():
         n_layers=cfg.model.n_layers,
         max_len=cfg.model.max_length
     )
+
+    model_state = torch.load(
+        cfg.model.pretrained_model_path, 
+        map_location=torch.device('cpu')
+    )
+
+    model.load_state_dict(model_state)
+    
 
     # === Load Dataset ===
     train_ds, val_ds = load_wikitext_block(
