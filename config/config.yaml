@@ -9,6 +9,7 @@ model:
   n_heads: 16
   n_embd: 1280
   max_length: 512
+  pretrained_model_path: "basic_lm_experiment.pth"
 
 # training settings
 training:
