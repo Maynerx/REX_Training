@@ -90,7 +90,7 @@ def main():
         map_location=torch.device('cpu')
     )
 
-    model.load_state_dict(model_state)
+    model.load_state_dict(model_state, strict=False)
     
 
     # === Load Dataset ===
