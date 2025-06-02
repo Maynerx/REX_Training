@@ -58,7 +58,7 @@
   "scheduler": {
     "type": "CosineAnnealing",
     "params": {
-      "T_max": 40
+      "T_max": 20
     }
   }
 }
