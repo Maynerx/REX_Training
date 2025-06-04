@@ -10,6 +10,7 @@ from datasets import load_dataset
 # ignore warnings
 import warnings
 from omegaconf import OmegaConf
+import tiktoken
 warnings.filterwarnings('ignore')
 
 import os
@@ -55,8 +56,9 @@ def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: i
     """
     with open(f"{file_path}", 'r', encoding='utf-8') as f:
         text = f.read()
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = tiktoken.get_encoding("o200k_base") # Using tiktoken for GPT-4 encoding
+    tokens = tokenizer.encode(text)
+
     tokens = tokenizer.encode(text)
     N = len(tokens)
     train_end = int(train_ratio * N)
