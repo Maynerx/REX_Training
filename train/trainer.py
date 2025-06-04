@@ -82,10 +82,8 @@ class Trainer:
 
         scaler = self.scaler if self.mixed_precision else None
 
-        for batch in self.train_loader:
-
-            input_ids, targets = batch['input_ids'].to(self.device), batch['labels'].to(self.device)
-
+        for input_ids, targets in self.train_loader: 
+            input_ids, targets = input_ids.to(self.device), targets.to(self.device)
             if self.mixed_precision:
                 with autocast(self.device.type):
                     logits = self.model_engine(input_ids)
@@ -117,8 +115,8 @@ class Trainer:
         self.model_engine.eval()
         total_val_loss = 0.0
         with torch.no_grad():
-            for batch in self.val_loader:  
-                input_ids, targets = batch['input_ids'].to(self.device), batch['labels'].to(self.device)
+            for input_ids, targets in self.val_loader: 
+                input_ids, targets = input_ids.to(self.device), targets.to(self.device)
                 logits = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
