@@ -8,17 +8,186 @@ from transformers import GPT2Tokenizer
 
 # Since the attention mechanism is quite complex, I did write some notes about it.
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super().__init__()
-        self.pos_embedding = nn.Embedding(max_len, d_model)
+class Gate(nn.Module):
+    def __init__(self,
+                 dim: int,
+                 num_experts: int,
+                 topk: int,
+                 score_fn: str = 'softmax',
+                 route_scale: float = 1.0,
+                 use_bias: bool = True):
+        """
+        A “top-k” gating module.  Expects input x of shape (N, dim),
+        produces either (topk_vals, topk_idx) or (topk_vals, topk_idx, dense_gate),
+        where:
+          - topk_vals:  (N, topk)
+          - topk_idx:   (N, topk)
+          - dense_gate: (N, num_experts)
 
-    def forward(self, x, offset: int = 0):
-        B, T, _ = x.size()
-        positions = torch.arange(T, device=x.device) + offset
-        positions = positions.unsqueeze(0).expand(B, T)
-        return x + self.pos_embedding(positions)
+        If x has more than 2 dims (e.g. (batch, seq_len, dim)), you must flatten
+        it first: x_flat = x.view(-1, dim), then reshape outputs afterward.
+        """
+        super(Gate, self).__init__()
+        self.dim = dim
+        self.num_experts = num_experts
+        self.topk = topk
+        self.score_fn = score_fn.lower()
+        self.route_scale = route_scale
 
+        # Weight: (num_experts, dim)
+        self.weight = nn.Parameter(torch.empty(num_experts, dim))
+        if use_bias:
+            self.bias = nn.Parameter(torch.zeros(num_experts))
+        else:
+            self.register_parameter('bias', None)
+
+        # Initialize weights
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, x: torch.Tensor, return_dense: bool = False):
+        """
+        Args:
+            x: (N, dim)  ← must be 2D.  If your real data is (batch, seq_len, dim),
+                 you should call Gate on x_flat = x.view(-1, dim).
+            return_dense (bool): if True, also returns a full (N, num_experts) tensor.
+        
+        Returns:
+            topk_vals:  (N, topk)
+            topk_idx:   (N, topk)
+            [dense_gate: (N, num_experts)]  # only if return_dense=True
+        """
+        N = x.size(0)  # e.g. N = batch_size * seq_len if you flattened
+        # 1) Compute raw logits: (N, num_experts)
+        logits = F.linear(x, self.weight, self.bias)  # (N, num_experts)
+
+        # 2) Score function
+        if self.score_fn == 'softmax':
+            scaled_logits = logits * self.route_scale
+            probs = F.softmax(scaled_logits, dim=-1)
+        elif self.score_fn == 'sigmoid':
+            raw = torch.sigmoid(logits * self.route_scale)
+            probs = raw / (raw.sum(dim=-1, keepdim=True) + 1e-12)
+        else:
+            raise ValueError(f"Unknown score_fn = {self.score_fn}")
+
+        # 3) Pick top-k: both (N, topk)
+        topk_vals, topk_idx = torch.topk(probs, self.topk, dim=-1)
+
+        # 4) (Optional) build a dense gating if requested
+        if return_dense:
+            # Now dense_gate shape must be (N, num_experts), to match topk_idx of shape (N, topk).
+            dense_gate = probs.new_zeros(N, self.num_experts)
+            dense_gate.scatter_(1, topk_idx, topk_vals)
+            return topk_vals, topk_idx, dense_gate
+
+        return topk_vals, topk_idx
+    
+
+class Expert(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(Expert, self).__init__()
+        self.layer1 = nn.Linear(input_dim, hidden_dim)
+        self.layer2 = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        x = torch.relu(self.layer1(x))
+        x = self.layer2(x)
+        return x
+    
+
+class MoE(nn.Module):
+    def __init__(self,
+                 input_dim: int,
+                 hidden_dim: int,
+                 output_dim: int,
+                 num_experts: int,
+                 topk: int = 1,
+                 score_fn: str = 'softmax',
+                 route_scale: float = 1.0,
+                 use_bias: bool = True):
+        super(MoE, self).__init__()
+        self.gate = Gate(input_dim, num_experts, topk, score_fn, route_scale, use_bias)
+        self.experts = nn.ModuleList([
+            Expert(input_dim, hidden_dim, output_dim)
+            for _ in range(num_experts)
+        ])
+        self.num_experts = num_experts
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.topk = topk
+
+    def forward(self, x: torch.Tensor, return_dense: bool = False):
+        B, L, D = x.shape
+        if D != self.input_dim:
+            raise ValueError(f"Expected last dim = {self.input_dim}, but got {D}.")
+
+        N = B * L
+        orig_shape = (B, L)
+
+        # 1) Flatten to (N, D)
+        x_flat = x.contiguous().view(N, D)  # (N, input_dim)
+
+        # 2) Run Gate → topk_vals, topk_idx, dense_gating
+        #    topk_vals:  (N, topk)
+        #    topk_idx:   (N, topk)
+        #    dense_gating: (N, num_experts)
+        topk_vals, topk_idx, dense_gating = self.gate(x_flat, return_dense=True)
+
+        E = self.num_experts
+        O = self.output_dim
+        k = self.topk
+
+        # 3) Prepare an (N, output_dim) tensor to accumulate results
+        device = x.device
+        out_flat = x_flat.new_zeros(N, O)  # will hold ∑ over experts
+
+        # 4) Flatten the (token, expert_slot) pairs:
+        #    - token_indices: [0,0,0,...,1,1,1,...,2,2,2,..., N-1,...] repeated k times
+        #    - expert_indices: the expert-each-slot for every token
+        #    - gate_weights:   the gate weight for each (token, slot) pair
+        token_indices = torch.arange(N, device=device).unsqueeze(1).repeat(1, k).view(-1)   # shape = (N*k,)
+        expert_indices = topk_idx.view(-1)   # shape = (N*k,)
+        gate_weights   = topk_vals.view(-1)  # shape = (N*k,)
+
+        # 5) For each expert e, gather the subset of tokens that routed to e
+        for e in range(E):
+            # Find positions in expert_indices == e
+            mask_e = (expert_indices == e)               # Boolean mask of length N*k
+            if not mask_e.any():
+                # No tokens routed to expert e in this batch; skip
+                continue
+
+            # "flat_positions" are the positions in the N*k list that map to this expert e
+            flat_positions = torch.nonzero(mask_e, as_tuple=False).squeeze(1)  # shape = (M_e,)
+            # But each flat_position corresponds to one of the N tokens (because we repeated tokens k times).
+            # Recover the original token idx for each:
+            tokens_e = token_indices[flat_positions]    # shape = (M_e,), values ∈ [0..N-1]
+
+            # 6) Gather the input features for exactly those tokens
+            x_e = x_flat[tokens_e]    # shape = (M_e, D)
+
+            # 7) Run expert e on this smaller batch
+            #    out_e_small: (M_e, O)
+            out_e_small = self.experts[e](x_e)
+
+            # 8) Weight each row by its gate score
+            #    gate_weights[flat_positions] are the scalar gate scores for these token→expert pairs
+            w_e = gate_weights[flat_positions].unsqueeze(1)  # shape = (M_e, 1)
+            out_e_small_weighted = out_e_small * w_e         # (M_e, O)
+
+            # 9) Scatter (add) these weighted outputs back into out_flat
+            #    For each i in [0..M_e-1], add out_e_small_weighted[i] to out_flat[tokens_e[i]]
+            out_flat.index_add_(0, tokens_e, out_e_small_weighted)
+
+        # 10) Reshape back to (B, L, O)
+        final_output = out_flat.view(B, L, O)
+
+        if return_dense:
+            # also reshape dense_gating → (B, L, E)
+            dense_gating_reshaped = dense_gating.view(B, L, E)
+            return final_output, dense_gating_reshaped
+
+        return final_output
 
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -30,6 +199,23 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor):
         return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    # split channel dim in half
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rope(tensor: torch.Tensor, freq: torch.Tensor) -> torch.Tensor:
+    # tensor: (B, H, T, head_dim) with head_dim = 2*half_dim
+    # freq:   (1, 1, T, half_dim)
+    B, H, T, head_dim = tensor.shape
+    half_dim = head_dim // 2
+    # Split tensor into two halves
+    t1, t2 = tensor[..., :half_dim], tensor[..., half_dim:]
+    cos, sin = freq.cos(), freq.sin()  # each (1,1,T,half_dim)
+    # Apply RoPE on each half
+    t1_rot = t1 * cos - t2 * sin
+    t2_rot = t1 * sin + t2 * cos
+    return torch.cat((t1_rot, t2_rot), dim=-1)
 
 class FlashAttention(nn.Module):
     def __init__(self, num_heads: int, embed_dim: int, max_len: int, dropout: int = 0.0, kv_caching: bool = False):
@@ -44,6 +230,12 @@ class FlashAttention(nn.Module):
         self.k_cache = None
         self.max_len = max_len
         self.cache_index = 0
+        head_dim = embed_dim // num_heads
+        half_dim = head_dim // 2
+        theta = 1.0 / (10000 ** (torch.arange(0, half_dim, dtype=torch.float32) / half_dim))
+        # freq_buffer shape: (max_len, half_dim)
+        freq_buffer = torch.outer(torch.arange(max_len, dtype=torch.float32), theta)
+        self.register_buffer("freq_buffer", freq_buffer.unsqueeze(0).unsqueeze(0), persistent=False)
 
     def forward(self, x : torch.Tensor):
         B, T_in, D = x.shape
@@ -64,6 +256,10 @@ class FlashAttention(nn.Module):
         """
 
         q, k, v = [t.permute(0,2,1,3) for t in (q,k,v)]       # now (B, H, T_in, head_dim)
+
+        freq = self.freq_buffer[:, :, :T_in, : (head_dim // 2)].to(q.device)
+        q = apply_rope(q, freq)
+        k = apply_rope(k, freq)
 
         # As the name suggests, this is the KV cache part
         if self.kv_caching:
@@ -123,18 +319,54 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_heads: int, n_embd: int, max_len: int, dropout: int = 0.1, kv_caching: bool = False):
+    def __init__(self,
+                n_heads: int, 
+                n_embd: int, 
+                max_len: int, 
+                index: int,
+                num_dense_layers: int = 1, 
+                num_expert: int = 8, 
+                score_fn: str = 'softmax', 
+                top_k: int = 2, 
+                dropout: int = 0.1, 
+                kv_caching: bool = False
+                ):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
-        self.ff = MLP(n_embd, dropout)
+        self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE(
+            n_embd, 
+            n_embd, 
+            n_embd, 
+            num_expert, 
+            topk=top_k, 
+            score_fn=score_fn, 
+            route_scale=1.0
+        )
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
-        
+        self.n_experts = num_expert
+        self.load = self.register_buffer('load', torch.zeros((num_expert,)))
+        self.alpha = 1e-2
+        self.moe_enabled = isinstance(self.ff, MoE)
+
+
     def forward(self, x: torch.Tensor):
         attn_out = self.attention(self.ln1(x))
         x = x + attn_out
-        x = x + self.ff(self.ln2(x))
-        return x
+        if isinstance(self.ff, MoE):
+            out, dense_gate = self.ff(self.ln2(x), return_dense=True)
+            x = x + out
+            if self.training:
+                B, L, E = dense_gate.size() 
+                dense_flat = dense_gate.view(B * L, E)
+                self.load = dense_flat.mean(dim=0) 
+                loss_aux = self.alpha * (self.load**2).sum()
+                return x, loss_aux
+            else:
+                return x, 0.0
+        else:
+            x = x + self.ff(self.ln2(x))
+            return x, 0.0
     
 
 class Transformer(nn.Module):
@@ -143,18 +375,38 @@ class Transformer(nn.Module):
                 n_heads: int, 
                 n_embd: int, 
                 vocab_size: int, 
+                num_dense_layers: int = 1, 
+                num_expert: int = 8, 
+                score_fn: str = 'softmax', 
+                top_k: int = 2, 
                 max_len:int = 5000, 
                 dropout:int = 0.1,
                 kv_caching: bool = False):
         super(Transformer, self).__init__()
         self.embedding = nn.Embedding(vocab_size, n_embd)
-        self.positional_encoding = PositionalEncoding(n_embd, max_len)
-        self.blocks = nn.Sequential(*[Block(n_heads, n_embd, max_len, dropout, kv_caching) for _ in range(n_layers)])
+        #self.positional_encoding = PositionalEncoding(n_embd, max_len)
+        self.blocks = nn.ModuleList([Block(n_heads,
+                                            n_embd, 
+                                            max_len,
+                                            index=i,
+                                            num_dense_layers=num_dense_layers,
+                                            num_expert=num_expert,
+                                            score_fn=score_fn,
+                                            top_k=top_k, 
+                                            dropout=dropout, 
+                                            kv_caching=kv_caching) for i in range(n_layers)])
         self.ln_f = RMSNorm(n_embd)
         self.fc_out = nn.Linear(n_embd, vocab_size)
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_embd = n_embd
+        self.num_dense_layers = num_dense_layers
+        self.num_expert = num_expert
+        self.score_fn = score_fn
+        self.top_k = top_k
+        self.dropout = dropout
+        self.n_embd = n_embd
+        self.n_heads = n_heads
         self.vocab_size = vocab_size
         self.max_length = max_len
         self.kv_caching = kv_caching
@@ -173,46 +425,24 @@ class Transformer(nn.Module):
 
     def forward(self, x : torch.Tensor):
         x = self.embedding(x)
-        x = self.positional_encoding(x)
+        #x = self.positional_encoding(x)
+        losses = 0.0
         for block in self.blocks:
             if self.training:
-                x = checkpoint.checkpoint(block, x, use_reentrant=False)
+                if block.moe_enabled:
+                    x, loss_aux = checkpoint.checkpoint(block, x, use_reentrant=False)
+                    losses += loss_aux
+                else:
+                    x, _ = checkpoint.checkpoint(block, x, use_reentrant=False)
             else:
-                x = block(x) 
+                x, _ = block(x) 
         x = self.ln_f(x)
         logits = self.fc_out(x)
+        if self.training:
+            return logits, losses
         return logits
     
-    @torch.no_grad()
-    def generate(self, input_ids : torch.Tensor, max_new_tokens : int):
-        """
-        Generate new tokens given an input sequence, using KV-caching.
-        """
-        B, T = input_ids.shape
-        device = input_ids.device
 
-        x = self.embedding(input_ids)
-        x = self.positional_encoding(x, offset=0)
-        for i, block in enumerate(self.blocks):
-            x = block(x)
-
-        generated = input_ids
-        for step in range(max_new_tokens):
-            last_token = generated[:, -1:].to(device)
-            offset     = generated.shape[1] - 1
-
-            x = self.embedding(last_token)
-            x = self.positional_encoding(x, offset=offset)
-
-            for i, block in enumerate(self.blocks):
-                x = block(x)
-
-            x = self.ln_f(x)
-            logits = self.fc_out(x)
-            next_token = torch.argmax(logits[:, -1:], dim=-1, keepdim=True)
-            generated = torch.cat([generated, next_token.squeeze(0)], dim=1)
-
-        return generated
     
 
 def generate_texts(
@@ -246,4 +476,3 @@ def generate_texts(
                 input_ids = input_ids[:, -model.max_length:]
     text = tokenizer.decode(generated[0], skip_special_tokens=True)
     return text
-
