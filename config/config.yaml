@@ -18,7 +18,7 @@ model:
 # training settings
 training:
   run_name: "basic_lm_experiment"
-  batch_size: 52
+  batch_size: 51
   lr: 1e-3
   epochs: 20
   mixed_precision: false
