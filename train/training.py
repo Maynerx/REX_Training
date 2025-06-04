@@ -94,11 +94,12 @@ def main():
 
     # === Load Dataset ===
     train_ds, val_ds = load_dataset(
-        file_path=cfg.dataset.file_path, 
-        train_ratio=cfg.dataset.train_ratio, 
-        val_ratio=cfg.dataset.val_ratio, 
+        file_path="train/input.txt",
+        train_ratio=cfg.training.train_ratio,
+        val_ratio=cfg.training.val_ratio,
         max_length=cfg.model.max_length
     )
+
 
     # === Training ===
     trainer = Trainer(
