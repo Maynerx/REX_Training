@@ -53,7 +53,7 @@ def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: i
     """
     Load the dataset from a text file and split it into training and validation sets.
     """
-    with open(f"{CURRENT_DIR}/{file_path}", 'r', encoding='utf-8') as f:
+    with open(f"{file_path}", 'r', encoding='utf-8') as f:
         text = f.read()
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
@@ -94,7 +94,7 @@ def main():
 
     # === Load Dataset ===
     train_ds, val_ds = load_dataset(
-        file_path="train/input.txt",
+        file_path="input.txt",
         train_ratio=cfg.training.train_ratio,
         val_ratio=cfg.training.val_ratio,
         max_length=cfg.model.max_length
