@@ -87,7 +87,7 @@ def main():
         n_layers=cfg.model.n_layers,
         max_len=cfg.model.max_length,
         num_dense_layers=cfg.model.num_dense_layers,
-        num_experts=cfg.model.num_experts,
+        num_expert=cfg.model.num_experts,
         score_fn=cfg.model.score_fn,
         top_k=cfg.model.top_k,
     )
