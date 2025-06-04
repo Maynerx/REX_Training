@@ -89,17 +89,19 @@ class Trainer:
             if self.mixed_precision:
                 with autocast(self.device.type):
                     logits = self.model_engine(input_ids)
-                    loss = self.criterion(
+                    loss, aux_loss = self.criterion(
                         logits.view(-1, logits.size(-1)),
                         targets.view(-1)
                     )
+                loss += aux_loss if aux_loss is not None else 0.0  # Add auxiliary loss if present
                 self.model_engine.backward(loss)
             else:
-                logits = self.model_engine(input_ids)
+                logits, aux_loss = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
                 )
+                loss += aux_loss if aux_loss is not None else 0.0  # Add auxiliary loss if present
                 self.model_engine.backward(loss)
             self.model_engine.step()  # This will handle the optimizer step
 
