@@ -92,14 +92,6 @@ def main():
         top_k=cfg.model.top_k,
     )
 
-    model_state = torch.load(
-        cfg.model.pretrained_model_path, 
-        map_location=torch.device('cpu')
-    )
-
-    model.load_state_dict(model_state, strict=False)
-    
-
     # === Load Dataset ===
     train_ds, val_ds = load_dataset(
         file_path=cfg.dataset.file_path, 
