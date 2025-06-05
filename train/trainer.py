@@ -102,7 +102,7 @@ class Trainer:
                 loss += aux_loss if aux_loss is not None else 0.0  # Add auxiliary loss if present
                 self.model_engine.backward(loss)
             self.model_engine.step()  # This will handle the optimizer step
-
+            get_accelerator().empty_cache()
             total_train_loss += loss.item()
 
         return total_train_loss / len(self.train_loader)
