@@ -10,6 +10,7 @@ import os
 import sys
 import deepspeed
 from deepspeed.accelerator import get_accelerator
+import gc
 # TODO: File another way to import the model
 # This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -156,6 +157,7 @@ class Trainer:
         """
         Run the training and validation process.
         """
+        gc.collect()
         print(f"Training {self.model.__class__.__name__} for {num_epochs} epochs...")
         print(f"Run name: {run_name}")
         print(f"Batch size: {self.batch_size}")
@@ -180,9 +182,11 @@ class Trainer:
             mlflow.log_param("max_length", self.model.max_length)
             for epoch in tqdm.tqdm(range(num_epochs)):        
                 train_loss = self.train_one_epoch()
+                gc.collect()
                 self.log_metrics(epoch, train_loss)
                 if (epoch + 1) % eval_interval == 0:
                     val_loss  = self.validate()
+                    gc.collect()
                     mlflow.log_metric("val_perplexity", math.exp(val_loss), step=val_iterations)
                     mlflow.log_metric("val_loss", val_loss, step=val_iterations)
                     val_iterations += 1
