@@ -337,6 +337,7 @@ class Block(nn.Module):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
         self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE_(args)
+        self.args = args
         """
         MoE(
             n_embd, 
@@ -351,6 +352,7 @@ class Block(nn.Module):
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
         self.n_experts = num_expert
+        self.load_balancing_loss = 0.0
         self.load = self.register_buffer('load', torch.zeros((num_expert,)))
         self.alpha = 1e-2
         self.moe_enabled = isinstance(self.ff, MoE_)
@@ -362,6 +364,8 @@ class Block(nn.Module):
         if isinstance(self.ff, MoE_):
             out, _ = self.ff(self.ln2(x))
             x = x + out
+            self.load_balancing_loss = batched_load_balancing_loss(self.args)
+            clear_load_balancing_loss()
             return x
         else:
             x = x + self.ff(self.ln2(x))
@@ -389,7 +393,6 @@ class Transformer(nn.Module):
             moe_num_experts=num_expert,
             moe_top_k=top_k,
             mlp_impl="grouped",
-            num_layers= n_layers - num_dense_layers - 1,
         )
         self.blocks = nn.ModuleList([Block(n_heads,
                                             n_embd, 
@@ -437,10 +440,13 @@ class Transformer(nn.Module):
         for block in self.blocks:
             if self.training:
                 x = checkpoint.checkpoint(block, x, use_reentrant=False)
+                losses += block.load_balancing_loss if block.moe_enabled else 0.0
             else:
                 x = block(x) 
         x = self.ln_f(x)
         logits = self.fc_out(x)
+        if self.training:
+            return logits, losses
         return logits
     
 
