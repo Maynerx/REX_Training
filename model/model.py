@@ -389,7 +389,7 @@ class Transformer(nn.Module):
             moe_num_experts=num_expert,
             moe_top_k=top_k,
             mlp_impl="grouped",
-            num_layers= n_layers,
+            num_layers= n_layers - num_dense_layers - 1,
         )
         self.blocks = nn.ModuleList([Block(n_heads,
                                             n_embd, 
