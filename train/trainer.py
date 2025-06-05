@@ -127,6 +127,7 @@ class Trainer:
                     targets.view(-1)
                 )
                 total_val_loss += loss.item()
+                get_accelerator().empty_cache()
         avg_val = total_val_loss / len(self.val_loader)
         return avg_val
     
