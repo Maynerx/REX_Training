@@ -1,6 +1,6 @@
 {
   "train_micro_batch_size_per_gpu": 2,
-  "gradient_accumulation_steps": 3,
+  "gradient_accumulation_steps": 4,
   "contiguous_gradients": true,
   "sub_group_size": 1e9,
   "optimizer": {
@@ -48,8 +48,8 @@
   "gradient_clipping": 1.0,
   "activation_checkpointing": {
     "partition_activations": true,
-    "cpu_checkpointing": true,
-    "contiguous_memory_optimization": false,
+    "cpu_checkpointing": false,
+    "contiguous_memory_optimization": true,
     "number_checkpoints": 4,
     "synchronize_checkpoint_boundary": false,
     "profile": false
