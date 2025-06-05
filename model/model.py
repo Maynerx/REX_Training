@@ -337,24 +337,11 @@ class Block(nn.Module):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
         self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE_(args)
-        self.args = args
-        """
-        MoE(
-            n_embd, 
-            n_embd, 
-            n_embd, 
-            num_expert, 
-            topk=top_k, 
-            score_fn=score_fn, 
-            route_scale=1.0
-        )
-        """
+        self.args = args  # Use the passed arguments instead of creating new ones
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
         self.n_experts = num_expert
         self.load_balancing_loss = 0.0
-        self.load = self.register_buffer('load', torch.zeros((num_expert,)))
-        self.alpha = 1e-2
         self.moe_enabled = isinstance(self.ff, MoE_)
 
 
@@ -362,10 +349,8 @@ class Block(nn.Module):
         attn_out = self.attention(self.ln1(x))
         x = x + attn_out
         if isinstance(self.ff, MoE_):
-            out, _ = self.ff(self.ln2(x))
+            out = self.ff(self.ln2(x))
             x = x + out
-            self.load_balancing_loss = batched_load_balancing_loss(self.args)
-            clear_load_balancing_loss()
             return x
         else:
             x = x + self.ff(self.ln2(x))
@@ -387,13 +372,32 @@ class Transformer(nn.Module):
                 kv_caching: bool = False):
         super(Transformer, self).__init__()
         self.embedding = nn.Embedding(vocab_size, n_embd)
-        #self.positional_encoding = PositionalEncoding(n_embd, max_len)
+        
+        # Initialize Arguments for MoE layers
+        # Calculate the actual number of MoE layers
+        num_moe_layers = max(0, n_layers - num_dense_layers)
+        
         self.args = Arguments(
             hidden_size=n_embd,
             moe_num_experts=num_expert,
             moe_top_k=top_k,
-            mlp_impl="grouped",
+            mlp_impl="grouped",  # Required for triton >=3.2.0
+            ffn_hidden_size=4 * n_embd,
+            bias=False,
+            activation_fn=F.gelu,
+            moe_loss_weight=0.01,
+            moe_capacity_factor=2,  # Capacity factor for load balancing
+            moe_normalize_expert_weights=1.0,  # Normalize expert weights
+            moe_jitter_eps=0.01,  # Add small noise to improve load balancing
+            moe_lbl_in_fp32=True,  # Compute load balancing loss in fp32
+            fp16=False,  # Disable fp16 to avoid dtype mismatch
+            bf16=False,  # Disable bf16 to ensure fp32
+            num_layers=num_moe_layers,  # Only count MoE layers
+            pipeline_model_parallel_size=1,  # Single pipeline stage
+            num_layers_per_virtual_pipeline_stage=None,  # No virtual pipeline
+            uniform_expert_assignment=False  # Use learned routing
         )
+        
         self.blocks = nn.ModuleList([Block(n_heads,
                                             n_embd, 
                                             max_len,
@@ -404,7 +408,7 @@ class Transformer(nn.Module):
                                             score_fn=score_fn,
                                             top_k=top_k, 
                                             dropout=dropout, 
-                                            kv_caching=kv_caching) for i in range(n_layers)])
+                                            kv_caching=kv_caching) for i in range(1, n_layers + 1)])
         self.ln_f = RMSNorm(n_embd)
         self.fc_out = nn.Linear(n_embd, vocab_size)
         self.n_layers = n_layers
@@ -434,19 +438,23 @@ class Transformer(nn.Module):
             init.ones_(module.weight)
 
     def forward(self, x : torch.Tensor):
+        # Clear any previous load balancing loss
+        clear_load_balancing_loss()
+        
         x = self.embedding(x)
-        #x = self.positional_encoding(x)
-        losses = 0.0
         for block in self.blocks:
-            if self.training:
+            if self.training and x.requires_grad:
+                # Use gradient checkpointing for memory efficiency during training
                 x = checkpoint.checkpoint(block, x, use_reentrant=False)
-                losses += block.load_balancing_loss if block.moe_enabled else 0.0
             else:
-                x = block(x) 
+                x = block(x)
+        
         x = self.ln_f(x)
         logits = self.fc_out(x)
+        
         if self.training:
-            return logits, losses
+            moe_loss = batched_load_balancing_loss(self.args)
+            return logits, moe_loss
         return logits
     
 
