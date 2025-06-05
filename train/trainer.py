@@ -14,6 +14,7 @@ from deepspeed.accelerator import get_accelerator
 # This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
+from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
 from model.model import Transformer
 
 
@@ -42,6 +43,7 @@ class Trainer:
         self.mixed_precision = mixed_precision
         self.max_grad_norm = max_grad_norm
         self.T_max = T_max # Store T_max for scheduler
+        self.args = self.model.args
 
         # Create optimizer instance before DeepSpeed initialization
         optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate)
@@ -87,21 +89,23 @@ class Trainer:
             if self.mixed_precision:
                 with autocast(self.device.type):
                     logits = self.model_engine(input_ids)
-                    loss, aux_loss = self.criterion(
+                    loss = self.criterion(
                         logits.view(-1, logits.size(-1)),
                         targets.view(-1)
                     )
-                loss += aux_loss if aux_loss is not None else 0.0  # Add auxiliary loss if present
+                loss += batched_load_balancing_loss(self.args)
                 self.model_engine.backward(loss)
             else:
-                logits, aux_loss = self.model_engine(input_ids)
+                logits = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
                 )
-                loss += aux_loss if aux_loss is not None else 0.0  # Add auxiliary loss if present
+                loss += batched_load_balancing_loss(self.args)
                 self.model_engine.backward(loss)
+            
             self.model_engine.step()  # This will handle the optimizer step
+            clear_load_balancing_loss()
             get_accelerator().empty_cache()
             total_train_loss += loss.item()
 
