@@ -83,7 +83,7 @@ class Trainer:
         total_train_loss = 0.0
 
         scaler = self.scaler if self.mixed_precision else None
-
+        get_accelerator().empty_cache()
         for input_ids, targets in self.train_loader: 
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
             if self.mixed_precision:
@@ -105,7 +105,6 @@ class Trainer:
                 self.model_engine.backward(loss)
             
             self.model_engine.step()  # This will handle the optimizer step
-            clear_load_balancing_loss()
             get_accelerator().empty_cache()
             total_train_loss += loss.item()
 
