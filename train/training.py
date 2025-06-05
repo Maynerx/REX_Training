@@ -24,9 +24,8 @@ sys.path.append(parent_dir)
 from model.model import Transformer
 
 
+tokenizer = tiktoken.get_encoding("o200k_base") # Using tiktoken for GPT-4 encoding
 
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-tokenizer.pad_token = tokenizer.eos_token
 
 
 def chunkify(token_list, block_size, stride=None):
@@ -82,7 +81,7 @@ def main():
 
     # === Model ===
     model = Transformer(
-        vocab_size=tokenizer.vocab_size,
+        vocab_size=tokenizer.n_vocab,
         n_embd=cfg.model.n_embd,
         n_heads=cfg.model.n_heads,
         n_layers=cfg.model.n_layers,
