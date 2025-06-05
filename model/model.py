@@ -5,7 +5,9 @@ import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
 from torch.amp import autocast
 from transformers import GPT2Tokenizer
-
+from megablocks.layers.moe import MoE as MoE_
+from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
+from megablocks.layers.arguments import Arguments
 # Since the attention mechanism is quite complex, I did write some notes about it.
 
 class Gate(nn.Module):
@@ -333,7 +335,15 @@ class Block(nn.Module):
                 ):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
-        self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE(
+        args = Arguments(
+            hidden_size=n_embd,
+            moe_num_experts=num_expert,
+            moe_top_k=top_k,
+            mlp_impl="grouped"
+        )
+        self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE_(args)
+        """
+        MoE(
             n_embd, 
             n_embd, 
             n_embd, 
@@ -342,31 +352,25 @@ class Block(nn.Module):
             score_fn=score_fn, 
             route_scale=1.0
         )
+        """
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
         self.n_experts = num_expert
         self.load = self.register_buffer('load', torch.zeros((num_expert,)))
         self.alpha = 1e-2
-        self.moe_enabled = isinstance(self.ff, MoE)
+        self.moe_enabled = isinstance(self.ff, MoE_)
 
 
     def forward(self, x: torch.Tensor):
         attn_out = self.attention(self.ln1(x))
         x = x + attn_out
-        if isinstance(self.ff, MoE):
-            out, dense_gate = self.ff(self.ln2(x), return_dense=True)
+        if isinstance(self.ff, MoE_):
+            out, _ = self.ff(self.ln2(x))
             x = x + out
-            if self.training:
-                B, L, E = dense_gate.size() 
-                dense_flat = dense_gate.view(B * L, E)
-                self.load = dense_flat.mean(dim=0) 
-                loss_aux = self.alpha * (self.load**2).sum()
-                return x, loss_aux
-            else:
-                return x, 0.0
+            return x
         else:
             x = x + self.ff(self.ln2(x))
-            return x, 0.0
+            return x
     
 
 class Transformer(nn.Module):
@@ -410,6 +414,12 @@ class Transformer(nn.Module):
         self.vocab_size = vocab_size
         self.max_length = max_len
         self.kv_caching = kv_caching
+        self.args = Arguments(
+            hidden_size=n_embd,
+            moe_num_experts=num_expert,
+            moe_top_k=top_k,
+            mlp_impl="grouped"
+        )
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -429,17 +439,11 @@ class Transformer(nn.Module):
         losses = 0.0
         for block in self.blocks:
             if self.training:
-                if block.moe_enabled:
-                    x, loss_aux = checkpoint.checkpoint(block, x, use_reentrant=False)
-                    losses += loss_aux
-                else:
-                    x, _ = checkpoint.checkpoint(block, x, use_reentrant=False)
+                x = checkpoint.checkpoint(block, x, use_reentrant=False)
             else:
-                x, _ = block(x) 
+                x = block(x) 
         x = self.ln_f(x)
         logits = self.fc_out(x)
-        if self.training:
-            return logits, losses
         return logits
     
 
