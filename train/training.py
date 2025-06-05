@@ -24,7 +24,7 @@ sys.path.append(parent_dir)
 from model.model import Transformer
 
 
-tokenizer = tiktoken.get_encoding("cl100k_base") # Using tiktoken for GPT-4 encoding
+tokenizer = tiktoken.get_encoding("r50k_base") # Using tiktoken for GPT-4 encoding
 
 
 
