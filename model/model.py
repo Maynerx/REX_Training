@@ -326,6 +326,7 @@ class Block(nn.Module):
                 n_embd: int, 
                 max_len: int, 
                 index: int,
+                args: Arguments,
                 num_dense_layers: int = 1, 
                 num_expert: int = 8, 
                 score_fn: str = 'softmax', 
@@ -335,12 +336,6 @@ class Block(nn.Module):
                 ):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
-        args = Arguments(
-            hidden_size=n_embd,
-            moe_num_experts=num_expert,
-            moe_top_k=top_k,
-            mlp_impl="grouped"
-        )
         self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE_(args)
         """
         MoE(
@@ -389,9 +384,17 @@ class Transformer(nn.Module):
         super(Transformer, self).__init__()
         self.embedding = nn.Embedding(vocab_size, n_embd)
         #self.positional_encoding = PositionalEncoding(n_embd, max_len)
+        self.args = Arguments(
+            hidden_size=n_embd,
+            moe_num_experts=num_expert,
+            moe_top_k=top_k,
+            mlp_impl="grouped",
+            num_layers= n_layers,
+        )
         self.blocks = nn.ModuleList([Block(n_heads,
                                             n_embd, 
                                             max_len,
+                                            args=self.args,
                                             index=i,
                                             num_dense_layers=num_dense_layers,
                                             num_expert=num_expert,
@@ -414,12 +417,6 @@ class Transformer(nn.Module):
         self.vocab_size = vocab_size
         self.max_length = max_len
         self.kv_caching = kv_caching
-        self.args = Arguments(
-            hidden_size=n_embd,
-            moe_num_experts=num_expert,
-            moe_top_k=top_k,
-            mlp_impl="grouped"
-        )
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
