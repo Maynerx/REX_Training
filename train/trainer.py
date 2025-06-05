@@ -88,20 +88,20 @@ class Trainer:
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
             if self.mixed_precision:
                 with autocast(self.device.type):
-                    logits = self.model_engine(input_ids)
+                    logits, aux_loss = self.model_engine(input_ids)
                     loss = self.criterion(
                         logits.view(-1, logits.size(-1)),
                         targets.view(-1)
                     )
-                loss += batched_load_balancing_loss(self.args)
+                loss += aux_loss
                 self.model_engine.backward(loss)
             else:
-                logits = self.model_engine(input_ids)
+                logits, aux_loss = self.model_engine(input_ids)
                 loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
                 )
-                loss += batched_load_balancing_loss(self.args)
+                loss += aux_loss
                 self.model_engine.backward(loss)
             
             self.model_engine.step()  # This will handle the optimizer step
