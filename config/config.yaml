@@ -5,13 +5,13 @@ defaults:
 # model hyperparameters
 model:
   model_name: BasicLM
-  n_layers: 8
-  n_heads: 8
-  n_embd: 768
+  n_layers: 16
+  n_heads: 16
+  n_embd: 1024
   max_length: 2048
   pretrained_model_path: "model_basic_lm_experiment.pth"
   num_dense_layers: 1
-  num_experts: 26
+  num_experts: 8 
   score_fn: "softmax"
   top_k: 2
 
