@@ -7,7 +7,7 @@ model:
   model_name: BasicLM
   n_layers: 12
   n_heads: 12
-  n_embd: 1024
+  n_embd: 768
   max_length: 512
   pretrained_model_path: "model_basic_lm_experiment.pth"
   num_dense_layers: 1
