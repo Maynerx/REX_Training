@@ -36,6 +36,7 @@
     "stage3_max_reuse_distance": 1e6,
     "stage3_prefetch_bucket_size": 2e6,
     "stage3_param_persistence_threshold": 1e4,
+    "zero3_free_pinned_memory": true,
     "memory_efficient_linear": true
   },
   "fp16": {
