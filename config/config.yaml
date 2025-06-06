@@ -11,7 +11,7 @@ model:
   max_length: 2048
   pretrained_model_path: "model_basic_lm_experiment.pth"
   num_dense_layers: 1
-  num_experts: 26
+  num_experts: 10
   score_fn: "softmax"
   top_k: 1
 
