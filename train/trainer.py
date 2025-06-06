@@ -66,8 +66,8 @@ class Trainer:
             
         self.criterion = nn.CrossEntropyLoss()
         self.tokenizer = tokenizer
-        self.train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=4, shuffle=True, pin_memory=True)
-        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, num_workers=4, shuffle=False, pin_memory=True)
+        self.train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, num_workers=4, shuffle=True, pin_memory=False)
+        self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, num_workers=4, shuffle=False, pin_memory=False)
         self.scaler = GradScaler() if mixed_precision else None
 
     def _lr_scheduler_callable(self, optimizer):
