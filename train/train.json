@@ -17,14 +17,14 @@
     "offload_param": {
       "device": "cpu",
       "pin_memory": false,
-      "buffer_count": 4,
+      "buffer_count": 2,
       "buffer_size": 5e7,
-      "max_in_cpu": 1e9
+      "max_in_cpu": 5e8
     },
     "offload_optimizer": {
       "device": "cpu",
       "pin_memory": false,
-      "buffer_count": 4,
+      "buffer_count": 2,
       "fast_init": false
     },
     "allgather_partitions": true,
@@ -36,7 +36,6 @@
     "stage3_max_reuse_distance": 1e6,
     "stage3_prefetch_bucket_size": 2e6,
     "stage3_param_persistence_threshold": 1e4,
-    "zero3_free_pinned_memory": true,
     "memory_efficient_linear": true
   },
   "fp16": {
