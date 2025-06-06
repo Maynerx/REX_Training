@@ -106,6 +106,10 @@ class Trainer:
                 self.model_engine.backward(loss)
             
             self.model_engine.step()  # This will handle the optimizer step
+            del logits, aux_loss, loss
+            del input_ids, targets
+            gc.collect()
+            torch.cuda.empty_cache()
             get_accelerator().empty_cache()
             total_train_loss += loss.item()
 
