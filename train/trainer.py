@@ -95,6 +95,7 @@ class Trainer:
                         targets.view(-1)
                     )
                 loss += aux_loss
+                clear_load_balancing_loss()
                 self.model_engine.backward(loss)
             else:
                 logits, aux_loss = self.model_engine(input_ids)
@@ -103,9 +104,11 @@ class Trainer:
                     targets.view(-1)
                 )
                 loss += aux_loss
+                clear_load_balancing_loss()
                 self.model_engine.backward(loss)
             
             self.model_engine.step()  # This will handle the optimizer step
+            self.model_engine.zero_grad() 
             del logits, aux_loss, loss
             del input_ids, targets
             gc.collect()
@@ -184,7 +187,7 @@ class Trainer:
             mlflow.log_param("n_heads", self.model.n_heads)
             mlflow.log_param("n_embd", self.model.n_embd)
             mlflow.log_param("max_length", self.model.max_length)
-            for epoch in tqdm.tqdm(range(num_epochs)):        
+            for epoch in tqdm.tqdm(range(num_epochs)):    
                 train_loss = self.train_one_epoch()
                 gc.collect()
                 self.log_metrics(epoch, train_loss)
