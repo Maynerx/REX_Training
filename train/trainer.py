@@ -109,12 +109,13 @@ class Trainer:
             
             self.model_engine.step()  # This will handle the optimizer step
             self.model_engine.zero_grad() 
-            del logits, aux_loss, loss
+            del logits, aux_loss
             del input_ids, targets
             gc.collect()
             torch.cuda.empty_cache()
             get_accelerator().empty_cache()
             total_train_loss += loss.item()
+            del loss
 
         return total_train_loss / len(self.train_loader)
     
