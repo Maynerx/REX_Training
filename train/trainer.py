@@ -84,6 +84,7 @@ class Trainer:
         total_train_loss = 0.0
 
         scaler = self.scaler if self.mixed_precision else None
+        self.check_mem(1)
         get_accelerator().empty_cache()
         for input_ids, targets in self.train_loader: 
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
@@ -115,8 +116,14 @@ class Trainer:
             gc.collect()
             torch.cuda.empty_cache()
             get_accelerator().empty_cache()
-
+        self.check_mem(2)
         return total_train_loss / len(self.train_loader)
+
+    def check_mem(self, id):
+        pid = os.getpid()
+        python_process = psutil.Process(pid)
+        memoryUse = python_process.memory_info()[0]/2.**30  # memory use in GB...I think
+        print(f'memory use: {memoryUse}, id : {id}')
     
 
     def validate(self) -> float:
@@ -126,6 +133,7 @@ class Trainer:
         self.model_engine.eval()
         total_val_loss = 0.0
         with torch.no_grad():
+            self.check_mem(3)
             for input_ids, targets in self.val_loader: 
                 input_ids, targets = input_ids.to(self.device), targets.to(self.device)
                 logits = self.model_engine(input_ids)
@@ -139,6 +147,7 @@ class Trainer:
                 torch.cuda.empty_cache()
                 get_accelerator().empty_cache()
         avg_val = total_val_loss / len(self.val_loader)
+        self.check_mem(4)
         return avg_val
     
     def save_model(self, run_name: str):
@@ -180,6 +189,7 @@ class Trainer:
         val_iterations = 0
         mlflow.set_tracking_uri(f"file:///{curent_dir}/mlruns") 
         mlflow.set_experiment(run_name)
+        self.check_mem(5)
         with mlflow.start_run():
             get_accelerator().empty_cache()
             mlflow.run_name = run_name
@@ -192,9 +202,11 @@ class Trainer:
             mlflow.log_param("max_length", self.model.max_length)
             for epoch in tqdm.tqdm(range(num_epochs)):    
                 train_loss = self.train_one_epoch()
+                self.check_mem(6)
                 gc.collect()
                 self.log_metrics(epoch, train_loss)
                 if (epoch + 1) % eval_interval == 0:
+                    self.check_mem(7)
                     val_loss  = self.validate()
                     gc.collect()
                     mlflow.log_metric("val_perplexity", math.exp(val_loss), step=val_iterations)
