@@ -3,14 +3,7 @@
   "gradient_accumulation_steps": 4,
   "contiguous_gradients": true,
   "sub_group_size": 1e9,
-  "optimizer": {
-    "type": "AdamW",
-    "params": {
-      "lr": 1e-4,
-      "betas": [0.9, 0.999],
-      "eps": 1e-8
-    }
-  },
+  
   "zero_force_ds_cpu_optimizer": false,
   "zero_optimization": {
   "stage": 3,
