@@ -87,6 +87,10 @@ class Trainer:
         scaler = self.scaler if self.mixed_precision else None
         self.check_mem(1)
         get_accelerator().empty_cache()
+        clear_load_balancing_loss()
+        self.model_engine.zero_grad()
+        gc.collect()
+        torch.cuda.empty_cache()
         for input_ids, targets in self.train_loader: 
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
             if self.mixed_precision:
