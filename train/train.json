@@ -3,7 +3,7 @@
   "gradient_accumulation_steps": 4,
   "contiguous_gradients": true,
   "sub_group_size": 1e9,
-  
+  "zero_allow_untested_optimizer": true,
   "zero_force_ds_cpu_optimizer": false,
   "zero_optimization": {
   "stage": 3,
