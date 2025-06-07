@@ -18,7 +18,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
 from model.model import Transformer
-
+import bitsandbytes as bnb
 
 
 
@@ -48,7 +48,13 @@ class Trainer:
         self.args = self.model.args
 
         # Create optimizer instance before DeepSpeed initialization
-        optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate)
+        optimizer = bnb.AdamW8bit(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=0.01
+        )
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
