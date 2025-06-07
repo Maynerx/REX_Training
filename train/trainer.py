@@ -9,6 +9,7 @@ import math
 import os
 import sys
 import deepspeed
+from deepspeed.ops.adam import FusedAdam
 from deepspeed.accelerator import get_accelerator
 import gc
 import psutil
@@ -18,8 +19,6 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
 from model.model import Transformer
-import bitsandbytes as bnb
-
 
 
 class Trainer:
@@ -48,7 +47,7 @@ class Trainer:
         self.args = self.model.args
 
         # Create optimizer instance before DeepSpeed initialization
-        optimizer = bnb.optim.AdamW8bit(
+        optimizer = FusedAdam(
             self.model.parameters(),
             lr=self.learning_rate,
             betas=(0.9, 0.999),
