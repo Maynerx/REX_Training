@@ -385,18 +385,18 @@ class Transformer(nn.Module):
             ffn_hidden_size=4 * n_embd,
             bias=False,
             activation_fn=F.gelu,
-            moe_expert_model_parallelism=True,
+            moe_expert_model_parallelism=False,
             memory_optimized_mlp= True,  # Use memory-optimized MLP
             shared_expert=True,
             moe_loss_weight=0.01,
-            moe_capacity_factor=2,  # Capacity factor for load balancing
+            moe_capacity_factor=1,  # Capacity factor for load balancing
             moe_normalize_expert_weights=1.0,  # Normalize expert weights
             moe_jitter_eps=0.01,  # Add small noise to improve load balancing
             moe_lbl_in_fp32=True,  # Compute load balancing loss in fp32
             fp16=True,  # Disable fp16 to avoid dtype mismatch
             bf16=False,  # Disable bf16 to ensure fp32
             num_layers=num_moe_layers,  # Only count MoE layers
-            pipeline_model_parallel_size=2,  # Single pipeline stage
+            pipeline_model_parallel_size=1,  # Single pipeline stage
             num_layers_per_virtual_pipeline_stage=None,  # No virtual pipeline
             uniform_expert_assignment=False  # Use learned routing
         )
