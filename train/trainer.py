@@ -83,13 +83,10 @@ class Trainer:
         """
         self.model_engine.train()
         total_train_loss = 0.0
-
         scaler = self.scaler if self.mixed_precision else None
         self.check_mem(1)
         get_accelerator().empty_cache()
-        clear_load_balancing_loss()
         self.model_engine.zero_grad()
-        gc.collect()
         torch.cuda.empty_cache()
         for input_ids, targets in self.train_loader: 
             input_ids, targets = input_ids.to(self.device), targets.to(self.device)
@@ -112,13 +109,13 @@ class Trainer:
                 loss += aux_loss
                 clear_load_balancing_loss()
                 self.model_engine.backward(loss)
+            self.check_mem(26)
             
             self.model_engine.step()  # This will handle the optimizer step
             self.model_engine.zero_grad() 
             total_train_loss += loss.item()
             del logits, aux_loss, loss
             del input_ids, targets
-            gc.collect()
             torch.cuda.empty_cache()
             get_accelerator().empty_cache()
         self.check_mem(2)
@@ -148,7 +145,6 @@ class Trainer:
                 )
                 total_val_loss += loss.item()
                 del input_ids, targets, loss
-                gc.collect()
                 torch.cuda.empty_cache()
                 get_accelerator().empty_cache()
         avg_val = total_val_loss / len(self.val_loader)
@@ -205,15 +201,15 @@ class Trainer:
             mlflow.log_param("n_heads", self.model.n_heads)
             mlflow.log_param("n_embd", self.model.n_embd)
             mlflow.log_param("max_length", self.model.max_length)
-            for epoch in tqdm.tqdm(range(num_epochs)):    
+            for epoch in tqdm.tqdm(range(num_epochs)):   
+                gc.collect()
                 train_loss = self.train_one_epoch()
                 self.check_mem(6)
-                gc.collect()
                 self.log_metrics(epoch, train_loss)
                 if (epoch + 1) % eval_interval == 0:
                     self.check_mem(7)
-                    val_loss  = self.validate()
                     gc.collect()
+                    val_loss  = self.validate()
                     mlflow.log_metric("val_perplexity", math.exp(val_loss), step=val_iterations)
                     mlflow.log_metric("val_loss", val_loss, step=val_iterations)
                     val_iterations += 1
