@@ -385,7 +385,7 @@ class Transformer(nn.Module):
             ffn_hidden_size=4 * n_embd,
             bias=False,
             activation_fn=F.gelu,
-            moe_expert_model_parallelism=True,
+            moe_expert_model_parallelism=False,
             moe_loss_weight=0.01,
             moe_capacity_factor=2,  # Capacity factor for load balancing
             moe_normalize_expert_weights=1.0,  # Normalize expert weights
