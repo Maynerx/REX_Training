@@ -8,12 +8,12 @@ model:
   n_layers: 16
   n_heads: 16
   n_embd: 1024
-  max_length: 2048
+  max_length: 1024
   pretrained_model_path: "model_basic_lm_experiment.pth"
-  num_dense_layers: 14
+  num_dense_layers: 0
   num_experts: 8
   score_fn: "softmax"
-  top_k: 1
+  top_k: 2
 
 # training settings
 training:
