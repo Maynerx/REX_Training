@@ -394,7 +394,7 @@ class Transformer(nn.Module):
             fp16=True,  # Disable fp16 to avoid dtype mismatch
             bf16=False,  # Disable bf16 to ensure fp32
             num_layers=num_moe_layers,  # Only count MoE layers
-            pipeline_model_parallel_size=2,  # Single pipeline stage
+            pipeline_model_parallel_size=1,  # Single pipeline stage
             num_layers_per_virtual_pipeline_stage=None,  # No virtual pipeline
             uniform_expert_assignment=False  # Use learned routing
         )
