@@ -10,7 +10,7 @@ model:
   n_embd: 2048
   max_length: 1024
   pretrained_model_path: "model_basic_lm_experiment.pth"
-  num_dense_layers: 28
+  num_dense_layers: 21
   num_experts: 8
   score_fn: "softmax"
   top_k: 2
