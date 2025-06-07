@@ -47,7 +47,7 @@
     "partition_activations": true,
     "cpu_checkpointing": false,
     "contiguous_memory_optimization": true,
-    "number_checkpoints": 0,
+    "number_checkpoints": 10,
     "synchronize_checkpoint_boundary": false,
     "profile": false
   },
