@@ -48,7 +48,7 @@ class Trainer:
         self.args = self.model.args
 
         # Create optimizer instance before DeepSpeed initialization
-        optimizer = bnb.AdamW8bit(
+        optimizer = bnb.optim.AdamW8bit(
             self.model.parameters(),
             lr=self.learning_rate,
             betas=(0.9, 0.999),
