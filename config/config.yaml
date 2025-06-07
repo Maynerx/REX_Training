@@ -8,7 +8,7 @@ model:
   n_layers: 24
   n_heads: 32
   n_embd: 1280
-  max_length: 1024
+  max_length: 512
   pretrained_model_path: "model_basic_lm_experiment.pth"
   num_dense_layers: 21
   num_experts: 8
