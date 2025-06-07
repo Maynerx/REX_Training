@@ -46,6 +46,10 @@ class Trainer:
         self.T_max = T_max # Store T_max for scheduler
         self.args = self.model.args
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+        self.num_parameters = sum(p.numel() for p in self.model.parameters())
+
         # Create optimizer instance before DeepSpeed initialization
         optimizer = FusedAdam(
             self.model.parameters(),
@@ -55,9 +59,7 @@ class Trainer:
             weight_decay=0.01
         )
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        self.num_parameters = sum(p.numel() for p in self.model.parameters())
+        
 
         # Initialize DeepSpeed, passing the optimizer
         # DeepSpeed will manage the optimizer and can also return a scheduler
