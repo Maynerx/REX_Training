@@ -11,6 +11,7 @@ import sys
 import deepspeed
 from deepspeed.accelerator import get_accelerator
 import gc
+import psutil
 # TODO: File another way to import the model
 # This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
