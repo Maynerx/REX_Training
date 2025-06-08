@@ -116,7 +116,6 @@ class Trainer:
                 loss += aux_loss
                 clear_load_balancing_loss()
                 self.model_engine.backward(loss)
-            self.check_mem(26)
             
             self.model_engine.step()  # This will handle the optimizer step
             self.model_engine.zero_grad() 
