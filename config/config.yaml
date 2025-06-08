@@ -6,7 +6,7 @@ defaults:
 model:
   model_name: BasicLM
   n_layers: 12
-  n_heads: 32
+  n_heads: 16
   n_embd: 2048
   max_length: 512
   pretrained_model_path: "model_basic_lm_experiment.pth"
