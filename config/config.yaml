@@ -5,7 +5,7 @@ defaults:
 # model hyperparameters
 model:
   model_name: BasicLM
-  n_layers: 18
+  n_layers: 12
   n_heads: 32
   n_embd: 2048
   max_length: 512
