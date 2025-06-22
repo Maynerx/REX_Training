@@ -90,6 +90,7 @@ def main():
         num_expert=cfg.model.num_experts,
         score_fn=cfg.model.score_fn,
         top_k=cfg.model.top_k,
+        inter_size=cfg.model.inner_dim
     )
 
     # === Load Dataset ===
