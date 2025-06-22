@@ -43,7 +43,6 @@ class Trainer:
         self.mixed_precision = mixed_precision
         self.max_grad_norm = max_grad_norm
         self.T_max = T_max # Store T_max for scheduler
-        self.args = self.model.args
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
