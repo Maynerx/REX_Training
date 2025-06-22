@@ -9,7 +9,7 @@ import math
 import os
 import sys
 import deepspeed
-from deepspeed.ops.adam import DeepSpeedCPUAdam
+from deepspeed.ops.adam import FusedAdam
 from deepspeed.accelerator import get_accelerator
 import gc
 import psutil
@@ -49,7 +49,7 @@ class Trainer:
         self.num_parameters = sum(p.numel() for p in self.model.parameters())
 
         # Create optimizer instance before DeepSpeed initialization
-        optimizer = DeepSpeedCPUAdam(
+        optimizer = FusedAdam(
             self.model.parameters(),
             lr=self.learning_rate,
             betas=(0.9, 0.999),
