@@ -14,6 +14,7 @@ model:
   num_experts: 8
   score_fn: "softmax"
   top_k: 2
+  inner_dim: 2048
 
 # training settings
 training:
