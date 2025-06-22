@@ -17,7 +17,6 @@ import psutil
 # This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
-from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
 from model.model import Transformer
 
 
@@ -105,7 +104,6 @@ class Trainer:
                         targets.view(-1)
                     )
                 loss += aux_loss
-                clear_load_balancing_loss()
                 self.model_engine.backward(loss)
             else:
                 logits, aux_loss = self.model_engine(input_ids)
@@ -114,7 +112,6 @@ class Trainer:
                     targets.view(-1)
                 )
                 loss += aux_loss
-                clear_load_balancing_loss()
                 self.model_engine.backward(loss)
             
             self.model_engine.step()  # This will handle the optimizer step
