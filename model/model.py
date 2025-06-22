@@ -5,191 +5,171 @@ import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
 from torch.amp import autocast
 from transformers import GPT2Tokenizer
-from megablocks.layers.moe import MoE as MoE_
-from megablocks.layers.moe import batched_load_balancing_loss, clear_load_balancing_loss
-from megablocks.layers.arguments import Arguments
-# Since the attention mechanism is quite complex, I did write some notes about it.
+import torch
+import torch.nn as nn
+import torch.nn.init as init
+import torch.utils.checkpoint as checkpoint
+import torch.nn.functional as F
+from torch.amp import autocast
+from transformers import GPT2Tokenizer
+
 
 class Gate(nn.Module):
-    def __init__(self,
-                 dim: int,
-                 num_experts: int,
-                 topk: int,
-                 score_fn: str = 'softmax',
-                 route_scale: float = 1.0,
-                 use_bias: bool = True):
-        """
-        A “top-k” gating module.  Expects input x of shape (N, dim),
-        produces either (topk_vals, topk_idx) or (topk_vals, topk_idx, dense_gate),
-        where:
-          - topk_vals:  (N, topk)
-          - topk_idx:   (N, topk)
-          - dense_gate: (N, num_experts)
-
-        If x has more than 2 dims (e.g. (batch, seq_len, dim)), you must flatten
-        it first: x_flat = x.view(-1, dim), then reshape outputs afterward.
-        """
-        super(Gate, self).__init__()
-        self.dim = dim
+    # (As before)
+    def __init__(self, model_dim, num_experts, topk=1, score_func="softmax", route_scale=1.0):
+        super().__init__()
+        self.model_dim = model_dim
         self.num_experts = num_experts
         self.topk = topk
-        self.score_fn = score_fn.lower()
+        self.score_func = score_func
         self.route_scale = route_scale
-
-        # Weight: (num_experts, dim)
-        self.weight = nn.Parameter(torch.empty(num_experts, dim))
-        if use_bias:
-            self.bias = nn.Parameter(torch.zeros(num_experts))
-        else:
-            self.register_parameter('bias', None)
-
-        # Initialize weights
+        self.weight = nn.Parameter(torch.empty(num_experts, model_dim))
+        self.bias = None
         nn.init.xavier_uniform_(self.weight)
-
-    def forward(self, x: torch.Tensor, return_dense: bool = False):
-        """
-        Args:
-            x: (N, dim)  ← must be 2D.  If your real data is (batch, seq_len, dim),
-                 you should call Gate on x_flat = x.view(-1, dim).
-            return_dense (bool): if True, also returns a full (N, num_experts) tensor.
-        
-        Returns:
-            topk_vals:  (N, topk)
-            topk_idx:   (N, topk)
-            [dense_gate: (N, num_experts)]  # only if return_dense=True
-        """
-        N = x.size(0)  # e.g. N = batch_size * seq_len if you flattened
-        # 1) Compute raw logits: (N, num_experts)
-        logits = F.linear(x, self.weight, self.bias)  # (N, num_experts)
-
-        # 2) Score function
-        if self.score_fn == 'softmax':
-            scaled_logits = logits * self.route_scale
-            probs = F.softmax(scaled_logits, dim=-1)
-        elif self.score_fn == 'sigmoid':
-            raw = torch.sigmoid(logits * self.route_scale)
-            probs = raw / (raw.sum(dim=-1, keepdim=True) + 1e-12)
-        else:
-            raise ValueError(f"Unknown score_fn = {self.score_fn}")
-
-        # 3) Pick top-k: both (N, topk)
-        topk_vals, topk_idx = torch.topk(probs, self.topk, dim=-1)
-
-        # 4) (Optional) build a dense gating if requested
-        if return_dense:
-            # Now dense_gate shape must be (N, num_experts), to match topk_idx of shape (N, topk).
-            dense_gate = probs.new_zeros(N, self.num_experts)
-            dense_gate.scatter_(1, topk_idx, topk_vals)
-            return topk_vals, topk_idx, dense_gate
-
-        return topk_vals, topk_idx
-    
-
-class Expert(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super(Expert, self).__init__()
-        self.layer1 = nn.Linear(input_dim, hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, output_dim)
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
 
     def forward(self, x):
-        x = torch.relu(self.layer1(x))
-        x = self.layer2(x)
-        return x
-    
+        """
+        Args:
+            x: [N, model_dim]
+        Returns:
+            topk_vals: [N, topk]
+            topk_idx: [N, topk]
+            all_scores: [N, num_experts]
+        """
+        scores = F.linear(x, self.weight, self.bias)  # [N, E]
+        if self.score_func == "softmax":
+            all_scores = scores.softmax(dim=-1)
+        else:
+            all_scores = torch.sigmoid(scores)
+
+        # select top-k
+        topk_vals, topk_idx = torch.topk(all_scores, self.topk, dim=-1)  # [N, K], [N, K]
+
+        if self.score_func == "sigmoid" and self.topk > 1:
+            # normalize among top-k
+            topk_vals = topk_vals / topk_vals.sum(dim=-1, keepdim=True)
+
+        # scale
+        topk_vals = topk_vals * self.route_scale  # [N, K]
+        return topk_vals, topk_idx, all_scores
+
+class Expert(nn.Module):
+    # (As before)
+    def __init__(self, dim, inter_dim):
+        super().__init__()
+        self.w1 = nn.Linear(dim, inter_dim)
+        self.w2 = nn.Linear(inter_dim, dim)
+        self.w3 = nn.Linear(dim, inter_dim)
+        nn.init.xavier_uniform_(self.w1.weight)
+        nn.init.xavier_uniform_(self.w2.weight)
+        nn.init.xavier_uniform_(self.w3.weight)
+
+    def forward(self, x):
+        # x: [n_tokens, model_dim]
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 class MoE(nn.Module):
-    def __init__(self,
-                 input_dim: int,
-                 hidden_dim: int,
-                 output_dim: int,
-                 num_experts: int,
-                 topk: int = 1,
-                 score_fn: str = 'softmax',
-                 route_scale: float = 1.0,
-                 use_bias: bool = True):
-        super(MoE, self).__init__()
-        self.gate = Gate(input_dim, num_experts, topk, score_fn, route_scale, use_bias)
-        self.experts = nn.ModuleList([
-            Expert(input_dim, hidden_dim, output_dim)
-            for _ in range(num_experts)
-        ])
+    def __init__(self, model_dim, num_experts, inter_dim, topk=1, aux_loss_coef=0.01, score_fn="softmax"):
+        super().__init__()
+        self.model_dim = model_dim
         self.num_experts = num_experts
-        self.input_dim = input_dim
-        self.output_dim = output_dim
         self.topk = topk
+        self.aux_loss_coef = aux_loss_coef
+        self.gate = Gate(model_dim, num_experts, topk=topk, score_func=score_fn, route_scale=1.0)
+        self.experts = nn.ModuleList([Expert(model_dim, inter_dim) for _ in range(num_experts)])
+        # (Optionally: shared expert, etc.)
 
-    def forward(self, x: torch.Tensor, return_dense: bool = False):
-        B, L, D = x.shape
-        if D != self.input_dim:
-            raise ValueError(f"Expected last dim = {self.input_dim}, but got {D}.")
-
-        N = B * L
-        orig_shape = (B, L)
-
-        # 1) Flatten to (N, D)
-        x_flat = x.contiguous().view(N, D)  # (N, input_dim)
-
-        # 2) Run Gate → topk_vals, topk_idx, dense_gating
-        #    topk_vals:  (N, topk)
-        #    topk_idx:   (N, topk)
-        #    dense_gating: (N, num_experts)
-        topk_vals, topk_idx, dense_gating = self.gate(x_flat, return_dense=True)
-
+    def forward(self, x):
+        """
+        Args:
+            x: [batch_size, seq_len, model_dim]
+        Returns:
+            output: [batch_size, seq_len, model_dim]
+            aux_loss: scalar tensor or None
+        """
+        batch_size, seq_len, dim = x.shape
+        assert dim == self.model_dim
+        x_flat = x.view(-1, dim)  # [N, D], N = batch_size * seq_len
+        N = x_flat.size(0)
         E = self.num_experts
-        O = self.output_dim
-        k = self.topk
+        K = self.topk
 
-        # 3) Prepare an (N, output_dim) tensor to accumulate results
-        device = x.device
-        out_flat = x_flat.new_zeros(N, O)  # will hold ∑ over experts
+        # 1. Gating
+        topk_vals, topk_idx, all_scores = self.gate(x_flat)
+        # topk_vals: [N, K], topk_idx: [N, K], all_scores: [N, E]
 
-        # 4) Flatten the (token, expert_slot) pairs:
-        #    - token_indices: [0,0,0,...,1,1,1,...,2,2,2,..., N-1,...] repeated k times
-        #    - expert_indices: the expert-each-slot for every token
-        #    - gate_weights:   the gate weight for each (token, slot) pair
-        token_indices = torch.arange(N, device=device).unsqueeze(1).repeat(1, k).view(-1)   # shape = (N*k,)
-        expert_indices = topk_idx.view(-1)   # shape = (N*k,)
-        gate_weights   = topk_vals.view(-1)  # shape = (N*k,)
+        # 2. Dispatch
+        # Prepare output buffer for flattened tokens
+        # We'll compute y_flat of shape [N, D]
+        # Approach: expand x_flat to [N, K, D], flatten to [N*K, D], process, then sum back.
+        if K == 1:
+            # existing top-1 logic
+            y_flat = torch.zeros_like(x_flat)  # [N, D]
+            expert_idx = topk_idx.squeeze(-1)    # [N]
+            expert_weight = topk_vals.squeeze(-1)  # [N]
+            for i in range(E):
+                mask = (expert_idx == i)
+                if not mask.any():
+                    continue
+                x_i = x_flat[mask]            # [n_i, D]
+                out_i = self.experts[i](x_i)  # [n_i, D]
+                w = expert_weight[mask].unsqueeze(-1)  # [n_i, 1]
+                y_flat[mask] = out_i * w
+        else:
+            # top-k > 1
+            # 2.1 Expand and flatten
+            # x_flat_expanded: [N, K, D]
+            x_flat_expanded = x_flat.unsqueeze(1).expand(-1, K, -1)  # [N, K, D]
+            # Flatten to [N*K, D]
+            x_exp = x_flat_expanded.contiguous().view(-1, dim)       # [N*K, D]
+            # Flatten indices and weights: [N*K]
+            idx_flat = topk_idx.contiguous().view(-1)   # [N*K]
+            weight_flat = topk_vals.contiguous().view(-1)  # [N*K]
+            # Prepare output buffer for each pick: [N*K, D]
+            y_exp = torch.zeros_like(x_exp)  # [N*K, D]
 
-        # 5) For each expert e, gather the subset of tokens that routed to e
-        for e in range(E):
-            # Find positions in expert_indices == e
-            mask_e = (expert_indices == e)               # Boolean mask of length N*k
-            if not mask_e.any():
-                # No tokens routed to expert e in this batch; skip
-                continue
+            # 2.2 Loop over experts
+            # For each expert i, process all positions in flattened picks where idx_flat == i
+            for i in range(E):
+                mask_i = (idx_flat == i)
+                if not mask_i.any():
+                    continue
+                x_i = x_exp[mask_i]         # [num_assigned, D]
+                out_i = self.experts[i](x_i)  # [num_assigned, D]
+                w_i = weight_flat[mask_i].unsqueeze(-1)  # [num_assigned, 1]
+                # Accumulate weighted outputs
+                y_exp[mask_i] = out_i * w_i  # [num_assigned, D]
 
-            # "flat_positions" are the positions in the N*k list that map to this expert e
-            flat_positions = torch.nonzero(mask_e, as_tuple=False).squeeze(1)  # shape = (M_e,)
-            # But each flat_position corresponds to one of the N tokens (because we repeated tokens k times).
-            # Recover the original token idx for each:
-            tokens_e = token_indices[flat_positions]    # shape = (M_e,), values ∈ [0..N-1]
+            # 2.3 Sum contributions from K picks
+            # y_exp: [N*K, D] -> reshape to [N, K, D]
+            y_flat = y_exp.view(N, K, dim).sum(dim=1)  # [N, D]
 
-            # 6) Gather the input features for exactly those tokens
-            x_e = x_flat[tokens_e]    # shape = (M_e, D)
+        # 3. Compute auxiliary load-balancing loss (top-k version)
+        aux_loss = None
+        if self.aux_loss_coef and E > 1:
+            # For top-k, define f_i as fraction of *assignments* to expert i:
+            # total assignments = N * K
+            # counts_i = number of times expert i appears in topk_idx
+            # So f_i = counts_i / (N*K)
+            idx_for_counts = topk_idx.view(-1)  # [N*K]
+            counts = torch.bincount(idx_for_counts, minlength=E).to(x_flat.dtype)  # [E]
+            f = counts / float(N * K)  # [E], sums to 1
 
-            # 7) Run expert e on this smaller batch
-            #    out_e_small: (M_e, O)
-            out_e_small = self.experts[e](x_e)
+            # P_i: average gating probability for expert i across tokens.
+            # all_scores: [N, E], average over N
+            P = all_scores.mean(dim=0)  # [E]
 
-            # 8) Weight each row by its gate score
-            #    gate_weights[flat_positions] are the scalar gate scores for these token→expert pairs
-            w_e = gate_weights[flat_positions].unsqueeze(1)  # shape = (M_e, 1)
-            out_e_small_weighted = out_e_small * w_e         # (M_e, O)
+            # Auxiliary loss: E * sum_i f_i * P_i
+            load_bal_loss = float(E) * torch.dot(f, P)  # scalar
+            aux_loss = self.aux_loss_coef * load_bal_loss
 
-            # 9) Scatter (add) these weighted outputs back into out_flat
-            #    For each i in [0..M_e-1], add out_e_small_weighted[i] to out_flat[tokens_e[i]]
-            out_flat.index_add_(0, tokens_e, out_e_small_weighted)
+        # 4. Reshape back to [batch_size, seq_len, D]
+        output = y_flat.view(batch_size, seq_len, dim)
+        return output, aux_loss
 
-        # 10) Reshape back to (B, L, O)
-        final_output = out_flat.view(B, L, O)
-
-        if return_dense:
-            # also reshape dense_gating → (B, L, E)
-            dense_gating_reshaped = dense_gating.view(B, L, E)
-            return final_output, dense_gating_reshaped
-
-        return final_output
+# model
 
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -291,23 +271,24 @@ class FlashAttention(nn.Module):
         T_k = k.size(2)    # total key/value length
         T_q = q.size(2)    # query length
 
-        with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
-            attn = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=None,
-            dropout_p=self.dropout.p,
-            is_causal=True,
-            scale=self.scaling
-        )
+        if x.device.type == 'cuda':
+            # This is flash attention, you can also implement FlashAttention2 or FlashAttention3, or even XFormers
+            # But since this is a simple implementation, I will remain simple and use FlashAttention
+            with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
+                attn = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=None,
+                    dropout_p=self.dropout.p,
+                    is_causal=True,
+                    scale=self.scaling
+                )
 
         T_out = attn.size(2) 
         attn = attn.permute(0,2,1,3).reshape(B, T_out, D)
 
         out = self.out_proj(self.dropout(attn))
         return out
-    
-
-    
+        
 class MLP(nn.Module):
     def __init__(self, n_embd: int, dropout:int = 0.1):
         super(MLP, self).__init__()
@@ -318,45 +299,49 @@ class MLP(nn.Module):
     def forward(self, x : torch.Tensor):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
-
-
 class Block(nn.Module):
     def __init__(self,
                 n_heads: int, 
                 n_embd: int, 
                 max_len: int, 
                 index: int,
-                args: Arguments,
                 num_dense_layers: int = 1, 
                 num_expert: int = 8, 
                 score_fn: str = 'softmax', 
-                top_k: int = 2, 
+                top_k: int = 2,
+                inter_size: int = 4096, 
                 dropout: int = 0.1, 
                 kv_caching: bool = False
                 ):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
-        self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE_(args)
-        self.args = args  # Use the passed arguments instead of creating new ones
+        self.ff = MLP(n_embd, dropout) if index <= num_dense_layers else MoE(
+            model_dim=n_embd,
+            num_experts=num_expert,
+            inter_dim=inter_size,
+            topk=top_k,
+            score_fn=score_fn
+        )
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
         self.n_experts = num_expert
         self.load_balancing_loss = 0.0
-        self.moe_enabled = isinstance(self.ff, MoE_)
+        self.moe_enabled = isinstance(self.ff, MoE)
 
 
     def forward(self, x: torch.Tensor):
         attn_out = self.attention(self.ln1(x))
         x = x + attn_out
-        if isinstance(self.ff, MoE_):
-            out = self.ff(self.ln2(x))
+        if isinstance(self.ff, MoE):
+            out, aux_loss = self.ff(self.ln2(x))
+            if self.training:
+                self.load_balancing_loss = aux_loss.item()
             x = x + out
             return x
         else:
             x = x + self.ff(self.ln2(x))
             return x
     
-
 class Transformer(nn.Module):
     def __init__(self,
                 n_layers: int, 
@@ -367,6 +352,7 @@ class Transformer(nn.Module):
                 num_expert: int = 8, 
                 score_fn: str = 'softmax', 
                 top_k: int = 2, 
+                inter_size: int = 4096,
                 max_len:int = 5000, 
                 dropout:int = 0.1,
                 kv_caching: bool = False):
@@ -377,39 +363,15 @@ class Transformer(nn.Module):
         # Calculate the actual number of MoE layers
         num_moe_layers = max(0, n_layers - num_dense_layers)
         
-        self.args = Arguments(
-            hidden_size=n_embd,
-            moe_num_experts=num_expert,
-            moe_top_k=top_k,
-            mlp_impl="grouped",  # Required for triton >=3.2.0
-            ffn_hidden_size=4 * n_embd,
-            bias=False,
-            activation_fn=F.gelu,
-            moe_expert_model_parallelism=False,
-            memory_optimized_mlp= True,  # Use memory-optimized MLP
-            shared_expert=True,
-            moe_loss_weight=0.01,
-            moe_capacity_factor=1,  # Capacity factor for load balancing
-            moe_normalize_expert_weights=1.0,  # Normalize expert weights
-            moe_jitter_eps=0.01,  # Add small noise to improve load balancing
-            moe_lbl_in_fp32=True,  # Compute load balancing loss in fp32
-            fp16=True,  # Disable fp16 to avoid dtype mismatch
-            bf16=False,  # Disable bf16 to ensure fp32
-            num_layers=num_moe_layers,  # Only count MoE layers
-            pipeline_model_parallel_size=1,  # Single pipeline stage
-            num_layers_per_virtual_pipeline_stage=None,  # No virtual pipeline
-            uniform_expert_assignment=False  # Use learned routing
-        )
-        
         self.blocks = nn.ModuleList([Block(n_heads,
                                             n_embd, 
                                             max_len,
-                                            args=self.args,
                                             index=i,
                                             num_dense_layers=num_dense_layers,
                                             num_expert=num_expert,
                                             score_fn=score_fn,
                                             top_k=top_k, 
+                                            inter_size=inter_size,
                                             dropout=dropout, 
                                             kv_caching=kv_caching) for i in range(1, n_layers + 1)])
         self.ln_f = RMSNorm(n_embd)
@@ -441,12 +403,9 @@ class Transformer(nn.Module):
             init.ones_(module.weight)
 
     def forward(self, x : torch.Tensor):
-        # Clear any previous load balancing loss
-        clear_load_balancing_loss()
-        
         x = self.embedding(x)
         for block in self.blocks:
-            if self.training and x.requires_grad:
+            if self.training and x.requires_grad and x.device.type == 'cuda':
                 # Use gradient checkpointing for memory efficiency during training
                 x = checkpoint.checkpoint(block, x, use_reentrant=False)
             else:
@@ -456,11 +415,9 @@ class Transformer(nn.Module):
         logits = self.fc_out(x)
         
         if self.training:
-            moe_loss = batched_load_balancing_loss(self.args)
+            moe_loss = sum(block.load_balancing_loss for block in self.blocks if block.moe_enabled)
             return logits, moe_loss
         return logits
-    
-
     
 
 def generate_texts(
